@@ -4,26 +4,32 @@ on:
   workflow_dispatch:
     inputs:
       priority:
-        description: 'Source priority filter (high, medium, low, all)'
-        default: 'high'
+        description: "Source priority filter (high, medium, low, all)"
+        default: "high"
         type: choice
-        options: [high, medium, low, all]
-  
+        options:
+          - high
+          - medium
+          - low
+          - all
+
   schedule:
-    - cron: '0 9 * * 1'  # Every Monday at 9 AM UTC
+    - cron: "0 9 * * 1"
 
 jobs:
   discover:
     name: Discover Funding Programs
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - run: cd apps && npm install --no-save
+          node-version: "20"
+
       - run: cd apps && node scripts/discover-programs.js
         env:
           ANYTHING_IMPORT_URL: ${{ secrets.ANYTHING_IMPORT_URL }}
           IMPORT_PROGRAMS_SECRET: ${{ secrets.IMPORT_PROGRAMS_SECRET }}
+          DISCOVERY_PRIORITY: ${{ github.event.inputs.priority || 'high' }}
