@@ -1,0 +1,142 @@
+[
+  {
+    "name": "Government of Canada Business Benefits Finder",
+    "url": "https://innovation.ised-isde.canada.ca/innovation/s/?language=en",
+    "type": "government",
+    "province": "National",
+    "priority": "high"
+  },
+  {
+    "name": "BDC - Business Development Bank of Canada",
+    "url": "https://www.bdc.ca/en/financing",
+    "type": "government",
+    "province": "National",
+    "priority": "high"
+  },
+  {
+    "name": "Ontario Business Grants",
+    "url": "https://www.ontario.ca/page/business-grants-ontario",
+    "type": "government",
+    "province": "ON",
+    "priority": "high"
+  },
+  {
+    "name": "Invest Ontario",
+    "url": "https://www.investontario.ca/programs",
+    "type": "government",
+    "province": "ON",
+    "priority": "high"
+  },
+  {
+    "name": "Alberta Innovates",
+    "url": "https://albertainnovates.ca/funding/",
+    "type": "government",
+    "province": "AB",
+    "priority": "high"
+  },
+  {
+    "name": "Innovate BC",
+    "url": "https://innovatebc.ca/programs/",
+    "type": "government",
+    "province": "BC",
+    "priority": "high"
+  },
+  {
+    "name": "Quebec Economic Development",
+    "url": "https://www.economie.gouv.qc.ca/en/business-support/financial-assistance/",
+    "type": "government",
+    "province": "QC",
+    "priority": "medium"
+  },
+  {
+    "name": "Atlantic Canada Opportunities Agency",
+    "url": "https://www.canada.ca/en/atlantic-canada-opportunities.html",
+    "type": "government",
+    "province": "National",
+    "priority": "medium"
+  },
+  {
+    "name": "Western Economic Diversification Canada",
+    "url": "https://www.wd-deo.gc.ca/eng/home.asp",
+    "type": "government",
+    "province": "National",
+    "priority": "medium"
+  },
+  {
+    "name": "FedDev Ontario",
+    "url": "https://feddev-ontario.canada.ca/",
+    "type": "government",
+    "province": "ON",
+    "priority": "medium"
+  },
+  {
+    "name": "National Research Council IRAP",
+    "url": "https://nrc.canada.ca/en/support-technology-innovation/industrial-research-assistance-program",
+    "type": "government",
+    "province": "National",
+    "priority": "high"
+  },
+  {
+    "name": "Export Development Canada",
+    "url": "https://www.edc.ca/en/solutions.html",
+    "type": "government",
+    "province": "National",
+    "priority": "medium"
+  },
+  {
+    "name": "Saskatchewan Economic Development",
+    "url": "https://www.saskatchewan.ca/business/investment-and-economic-development/business-funding",
+    "type": "government",
+    "province": "SK",
+    "priority": "medium"
+  },
+  {
+    "name": "Manitoba Growth Enterprise and Trade",
+    "url": "https://www.gov.mb.ca/jec/busdev/financial/index.html",
+    "type": "government",
+    "province": "MB",
+    "priority": "medium"
+  },
+  {
+    "name": "New Brunswick Opportunities NB",
+    "url": "https://onbcanada.ca/programs-and-services/",
+    "type": "government",
+    "province": "NB",
+    "priority": "medium"
+  },
+  {
+    "name": "Nova Scotia Business Inc",
+    "url": "https://www.novascotiabusiness.com/",
+    "type": "government",
+    "province": "NS",
+    "priority": "medium"
+  },
+  {
+    "name": "Innovation PEI",
+    "url": "https://www.princeedwardisland.ca/en/topic/innovation-pei",
+    "type": "government",
+    "province": "PE",
+    "priority": "low"
+  },
+  {
+    "name": "Digital Main Street",
+    "url": "https://digitalmainstreet.ca/grants-funding/",
+    "type": "nonprofit",
+    "province": "ON",
+    "priority": "medium"
+  },
+  {
+    "name": "MaRS Discovery District",
+    "url": "https://www.marsdd.com/",
+    "type": "nonprofit",
+    "province": "ON",
+    "priority": "low"
+  },
+  {
+    "name": "Futurpreneur Canada",
+    "url": "https://www.futurpreneur.ca/en/",
+    "type": "nonprofit",
+    "province": "National",
+    "priority": "medium"
+  }
+]
