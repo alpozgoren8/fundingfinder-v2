@@ -6,9 +6,11 @@
  * This script:
  * 1. Reads trusted funding sources from data/funding-sources.json
  * 2. Visits each source URL
- * 3. Finds funding program links (grants, loans, tax credits, subsidies, incentives)
- * 4. Extracts program information
- * 5. Sends draft programs to POST /api/import-programs
+ * 3. Detects if it's a directory/list page or detail page
+ * 4. Extracts all program links from directory pages
+ * 5. Visits each program detail page
+ * 6. Extracts comprehensive program information
+ * 7. Sends draft programs to POST /api/import-programs
  *
  * Environment Variables Required:
  * - IMPORT_PROGRAMS_SECRET: Bearer token for authentication
@@ -25,6 +27,9 @@ const FUNDING_SOURCES_PATH = path.join(
   __dirname,
   "../data/funding-sources.json",
 );
+const MAX_PROGRAM_LINKS = 100;
+const FETCH_TIMEOUT = 15000; // 15 seconds
+const RATE_LIMIT_DELAY = 1000; // 1 second between requests
 
 // Province code mapping for normalization
 const PROVINCE_MAPPINGS = {
@@ -54,15 +59,21 @@ function normalizeProvince(provinceName) {
   return PROVINCE_MAPPINGS[normalized] || provinceName;
 }
 
-// Helper to fetch URL content
+// Helper to fetch URL content with timeout
 async function fetchURL(url) {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
     const response = await fetch(url, {
       headers: {
         "User-Agent":
           "FundingFinder-Discovery-Bot/1.0 (https://github.com/fundingfinder)",
       },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -70,16 +81,111 @@ async function fetchURL(url) {
 
     return await response.text();
   } catch (error) {
-    console.error(`Failed to fetch ${url}:`, error.message);
+    if (error.name === "AbortError") {
+      console.error(`   ⏱️  Timeout fetching ${url} (${FETCH_TIMEOUT}ms)`);
+    } else {
+      console.error(`   ❌ Failed to fetch ${url}:`, error.message);
+    }
     return null;
   }
 }
 
-// Extract potential program links from HTML
-function extractProgramLinks(html, baseUrl) {
-  const links = [];
+// Convert relative URL to absolute
+function toAbsoluteURL(href, baseUrl) {
+  if (!href) return null;
 
-  // Keywords that indicate funding programs
+  try {
+    // Already absolute
+    if (href.startsWith("http://") || href.startsWith("https://")) {
+      return href;
+    }
+
+    // Relative to root
+    if (href.startsWith("/")) {
+      const base = new URL(baseUrl);
+      return `${base.protocol}//${base.host}${href}`;
+    }
+
+    // Relative to current path
+    return new URL(href, baseUrl).toString();
+  } catch (error) {
+    return null;
+  }
+}
+
+// Check if URL should be skipped
+function shouldSkipLink(url, baseUrl, linkText) {
+  if (!url) return true;
+
+  const lowerUrl = url.toLowerCase();
+  const lowerText = (linkText || "").toLowerCase();
+
+  // Skip anchors
+  if (url.startsWith("#")) return true;
+
+  // Skip mailto/tel/javascript
+  if (
+    lowerUrl.startsWith("mailto:") ||
+    lowerUrl.startsWith("tel:") ||
+    lowerUrl.startsWith("javascript:")
+  )
+    return true;
+
+  // Skip social media
+  if (
+    lowerUrl.includes("facebook.com") ||
+    lowerUrl.includes("twitter.com") ||
+    lowerUrl.includes("linkedin.com") ||
+    lowerUrl.includes("instagram.com") ||
+    lowerUrl.includes("youtube.com")
+  )
+    return true;
+
+  // Skip PDFs and documents
+  if (
+    lowerUrl.endsWith(".pdf") ||
+    lowerUrl.endsWith(".doc") ||
+    lowerUrl.endsWith(".docx") ||
+    lowerUrl.endsWith(".xls") ||
+    lowerUrl.endsWith(".xlsx")
+  )
+    return true;
+
+  // Skip navigation/footer links
+  const skipTexts = [
+    "home",
+    "about",
+    "contact",
+    "privacy",
+    "terms",
+    "login",
+    "sign in",
+    "register",
+    "logout",
+    "sitemap",
+    "accessibility",
+  ];
+  if (skipTexts.some((skip) => lowerText === skip)) return true;
+
+  // Must be same domain
+  try {
+    const urlDomain = new URL(url).hostname;
+    const baseDomain = new URL(baseUrl).hostname;
+    if (urlDomain !== baseDomain) return true;
+  } catch {
+    return true;
+  }
+
+  return false;
+}
+
+// Detect if page is a directory/list page
+function isDirectoryPage(html, url) {
+  // Count links that look like programs
+  const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
+  let programLinkCount = 0;
+  let match;
+
   const fundingKeywords = [
     "grant",
     "loan",
@@ -98,7 +204,49 @@ function extractProgramLinks(html, baseUrl) {
     "benefit",
   ];
 
-  // Simple regex to extract links (in production, use a proper HTML parser)
+  while ((match = linkRegex.exec(html)) !== null) {
+    const text = match[2]
+      .replace(/<[^>]+>/g, "")
+      .trim()
+      .toLowerCase();
+    if (fundingKeywords.some((keyword) => text.includes(keyword))) {
+      programLinkCount++;
+    }
+  }
+
+  // If page has many program-like links, it's likely a directory
+  const isDirectory = programLinkCount >= 5;
+
+  console.log(
+    `   🔎 Page analysis: ${programLinkCount} program-like links found → ${isDirectory ? "DIRECTORY" : "DETAIL"} page`,
+  );
+
+  return isDirectory;
+}
+
+// Extract all program links from a directory page
+function extractProgramLinks(html, baseUrl) {
+  const links = [];
+  const seenUrls = new Set();
+
+  const fundingKeywords = [
+    "grant",
+    "loan",
+    "funding",
+    "subsidy",
+    "credit",
+    "incentive",
+    "program",
+    "finance",
+    "support",
+    "assistance",
+    "contribution",
+    "investment",
+    "capital",
+    "rebate",
+    "benefit",
+  ];
+
   const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
   let match;
 
@@ -112,103 +260,137 @@ function extractProgramLinks(html, baseUrl) {
       lowerText.includes(keyword),
     );
 
-    if (containsFundingKeyword && href) {
-      // Resolve relative URLs
-      let fullUrl = href;
-      if (href.startsWith("/")) {
-        const base = new URL(baseUrl);
-        fullUrl = `${base.protocol}//${base.host}${href}`;
-      } else if (!href.startsWith("http")) {
-        fullUrl = new URL(href, baseUrl).toString();
+    if (containsFundingKeyword) {
+      const fullUrl = toAbsoluteURL(href, baseUrl);
+
+      if (shouldSkipLink(fullUrl, baseUrl, text)) {
+        continue;
       }
 
+      if (seenUrls.has(fullUrl)) {
+        continue;
+      }
+
+      seenUrls.add(fullUrl);
       links.push({
         url: fullUrl,
         text: text,
       });
+
+      // Limit to MAX_PROGRAM_LINKS
+      if (links.length >= MAX_PROGRAM_LINKS) {
+        console.log(
+          `   ⚠️  Reached max limit of ${MAX_PROGRAM_LINKS} program links`,
+        );
+        break;
+      }
     }
   }
 
   return links;
 }
 
-// Extract program information from a page (simplified version)
-// In production, you would use AI/LLM to extract structured data
-function extractProgramInfo(html, sourceUrl, sourceName) {
-  // This is a simplified extraction - in production, use AI (GPT/Claude) to extract structured data
+// Extract program information from a detail page
+function extractProgramInfo(html, sourceUrl, sourceName, defaultProvince) {
   const program = {
-    name: extractTitle(html) || "Discovered Program",
-    description:
-      extractDescription(html) || "Program description pending review",
     source_url: sourceUrl,
     source_name: sourceName,
     import_method: "github_discovery",
   };
 
-  // Try to extract other fields
-  const text = html.replace(/<[^>]+>/g, " ").toLowerCase();
-
-  // Extract program type
-  if (text.includes("grant") && !text.includes("loan")) {
-    program.program_type = "Grant";
-  } else if (text.includes("loan")) {
-    program.program_type = "Loan";
-  } else if (text.includes("tax credit")) {
-    program.program_type = "Tax Credit";
-  } else if (text.includes("subsidy")) {
-    program.program_type = "Subsidy";
-  }
-
-  // Extract funding amount patterns (e.g., "$50,000", "up to $1M")
-  const amountMatch = text.match(
-    /\$[\d,]+(?:k|m)?|\d+(?:,\d{3})*\s*(?:dollars?|cad)/i,
-  );
-  if (amountMatch) {
-    program.funding_amount = amountMatch[0];
-  }
-
-  // Extract application link
-  const applyLinkMatch = html.match(
-    /<a[^>]+href=["']([^"']+)["'][^>]*>(?:apply|application|submit|register)/i,
-  );
-  if (applyLinkMatch) {
-    program.application_link = applyLinkMatch[1];
-  }
-
-  return program;
-}
-
-function extractTitle(html) {
-  // Try to extract page title
-  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-  if (titleMatch) {
-    return titleMatch[1].trim().substring(0, 200);
-  }
-
+  // Extract name from h1
   const h1Match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
   if (h1Match) {
-    return h1Match[1].trim().substring(0, 200);
+    program.name = h1Match[1].trim().substring(0, 200);
+  } else {
+    // Fallback to title
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    if (titleMatch) {
+      program.name = titleMatch[1].trim().substring(0, 200);
+    }
   }
 
-  return null;
-}
-
-function extractDescription(html) {
-  // Try to extract meta description
+  // Extract description from meta description or first paragraph
   const metaMatch = html.match(
     /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i,
   );
   if (metaMatch) {
-    return metaMatch[1].trim().substring(0, 500);
+    program.description = metaMatch[1].trim().substring(0, 500);
+  } else {
+    // Try first paragraph near h1
+    const pMatch = html.match(/<h1[^>]*>.*?<\/h1>\s*<p[^>]*>([^<]+)<\/p>/is);
+    if (pMatch) {
+      program.description = pMatch[1].trim().substring(0, 500);
+    } else {
+      const anyPMatch = html.match(/<p[^>]*>([^<]+)<\/p>/i);
+      if (anyPMatch) {
+        program.description = anyPMatch[1].trim().substring(0, 500);
+      }
+    }
   }
 
-  // Try first paragraph
-  const pMatch = html.match(/<p[^>]*>([^<]+)<\/p>/i);
-  if (pMatch) {
-    return pMatch[1].trim().substring(0, 500);
+  const text = html.replace(/<[^>]+>/g, " ");
+  const lowerText = text.toLowerCase();
+
+  // Extract eligibility
+  const eligibilityMatch = text.match(
+    /(?:eligibility|who can apply)[:\s]+([\s\S]{0,500}?)(?:\n\n|<h\d|$)/i,
+  );
+  if (eligibilityMatch) {
+    program.eligibility = eligibilityMatch[1].trim().substring(0, 500);
   }
 
-  return null;
+  // Extract how to apply
+  const applyMatch = text.match(
+    /(?:how to apply|application process)[:\s]+([\s\S]{0,500}?)(?:\n\n|<h\d|$)/i,
+  );
+  if (applyMatch) {
+    program.how_to_apply = applyMatch[1].trim().substring(0, 500);
+  }
+
+  // Extract program type
+  if (lowerText.includes("grant") && !lowerText.includes("loan")) {
+    program.program_type = "Grant";
+  } else if (lowerText.includes("loan")) {
+    program.program_type = "Loan";
+  } else if (lowerText.includes("tax credit")) {
+    program.program_type = "Tax Credit";
+  } else if (lowerText.includes("subsidy")) {
+    program.program_type = "Subsidy";
+  } else if (lowerText.includes("rebate")) {
+    program.program_type = "Rebate";
+  }
+
+  // Extract funding amount patterns
+  const amountMatch = lowerText.match(
+    /(?:up to|maximum|max of)?\s*\$[\d,]+(?:k|m|,\d{3})*(?:\s*(?:million|thousand))?/i,
+  );
+  if (amountMatch) {
+    program.funding_amount = amountMatch[0].trim();
+  }
+
+  // Extract application link
+  const applyLinkMatch = html.match(
+    /<a[^>]+href=["']([^"']+)["'][^>]*>\s*(?:apply|application|submit|register|apply now|start application)/i,
+  );
+  if (applyLinkMatch) {
+    program.application_link = toAbsoluteURL(applyLinkMatch[1], sourceUrl);
+  }
+
+  // Extract deadline
+  const deadlineMatch = text.match(
+    /(?:deadline|apply by|due date)[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
+  );
+  if (deadlineMatch) {
+    program.deadline = deadlineMatch[1];
+  }
+
+  // Set province
+  if (defaultProvince && defaultProvince !== "National") {
+    program.province = defaultProvince;
+  }
+
+  return program;
 }
 
 // Discover programs from a single source
@@ -222,37 +404,76 @@ async function discoverFromSource(source) {
     return [];
   }
 
-  // Extract program links
-  const programLinks = extractProgramLinks(html, source.url);
-  console.log(`   📋 Found ${programLinks.length} potential program links`);
+  // Detect if this is a directory or detail page
+  const isDirectory = isDirectoryPage(html, source.url);
 
   const programs = [];
+  const visitedUrls = new Set();
 
-  // Limit to first 5 links per source to avoid overwhelming the system
-  const linksToProcess = programLinks.slice(0, 5);
+  if (isDirectory) {
+    // Extract all program links
+    const programLinks = extractProgramLinks(html, source.url);
+    console.log(`   📋 Found ${programLinks.length} program links`);
 
-  for (const link of linksToProcess) {
-    console.log(`   📄 Processing: ${link.text}`);
+    // Visit each program detail page
+    for (let i = 0; i < programLinks.length; i++) {
+      const link = programLinks[i];
 
-    const programHtml = await fetchURL(link.url);
-    if (!programHtml) {
-      continue;
+      if (visitedUrls.has(link.url)) {
+        console.log(`   ⏭️  Skipped duplicate: ${link.text}`);
+        continue;
+      }
+
+      visitedUrls.add(link.url);
+
+      console.log(
+        `   📄 [${i + 1}/${programLinks.length}] Visiting: ${link.text}`,
+      );
+      console.log(`      ${link.url}`);
+
+      const programHtml = await fetchURL(link.url);
+      if (!programHtml) {
+        console.log(`      ❌ Failed to fetch`);
+        continue;
+      }
+
+      const programInfo = extractProgramInfo(
+        programHtml,
+        link.url,
+        source.name,
+        source.province,
+      );
+
+      if (programInfo.name) {
+        programs.push(programInfo);
+        console.log(`      ✅ Extracted: ${programInfo.name}`);
+      } else {
+        console.log(`      ⚠️  No program name found, skipping`);
+      }
+
+      // Rate limiting
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY));
     }
+  } else {
+    // This is a detail page - extract directly
+    console.log(`   📄 Processing detail page`);
 
-    const programInfo = extractProgramInfo(programHtml, link.url, source.name);
+    const programInfo = extractProgramInfo(
+      html,
+      source.url,
+      source.name,
+      source.province,
+    );
 
-    // Add source province if available
-    if (source.province && source.province !== "National") {
-      programInfo.province = source.province;
+    if (programInfo.name) {
+      programs.push(programInfo);
+      console.log(`   ✅ Extracted: ${programInfo.name}`);
+    } else {
+      console.log(`   ⚠️  No program name found`);
     }
-
-    programs.push(programInfo);
-
-    // Rate limiting - wait 1 second between requests
-    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  console.log(`   ✅ Extracted ${programs.length} programs`);
+  console.log(`   ✨ Total extracted: ${programs.length} programs`);
   return programs;
 }
 
