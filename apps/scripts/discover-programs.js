@@ -15,6 +15,7 @@
  * Environment Variables Required:
  * - IMPORT_PROGRAMS_SECRET: Bearer token for authentication
  * - ANYTHING_IMPORT_URL: Import endpoint URL (e.g., https://yourdomain.com/api/import-programs)
+ * - DISCOVERY_PRIORITY: Priority filter (high, medium, low, all) - defaults to "high"
  */
 
 const fs = require("fs").promises;
@@ -247,20 +248,66 @@ function extractProgramLinks(html, baseUrl) {
     "benefit",
   ];
 
+  // Check if this is a Nova Scotia programs directory page
+  const isNovaScotiaProgramsDir =
+    baseUrl.includes("novascotia.ca") && baseUrl.includes("/programs");
+
   const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
   let match;
 
   while ((match = linkRegex.exec(html)) !== null) {
     const href = match[1];
     const text = match[2].replace(/<[^>]+>/g, "").trim();
-
-    // Check if link text contains funding keywords
     const lowerText = text.toLowerCase();
-    const containsFundingKeyword = fundingKeywords.some((keyword) =>
-      lowerText.includes(keyword),
-    );
 
-    if (containsFundingKeyword) {
+    let shouldInclude = false;
+
+    // Special handling for Nova Scotia programs directory
+    if (isNovaScotiaProgramsDir) {
+      const fullUrl = toAbsoluteURL(href, baseUrl);
+
+      // Include if URL starts with /programs/ and meets basic criteria
+      if (fullUrl && fullUrl.includes("/programs/")) {
+        try {
+          const urlPath = new URL(fullUrl).pathname;
+
+          // Must start with /programs/
+          if (urlPath.startsWith("/programs/")) {
+            // Must not be exactly /programs/
+            if (urlPath !== "/programs/" && urlPath !== "/programs") {
+              // Must have non-empty link text
+              if (text.length > 0) {
+                // Check it's not a PDF, email, social, login, or anchor
+                const lowerUrl = fullUrl.toLowerCase();
+                const isPdf = lowerUrl.endsWith(".pdf");
+                const isEmail = lowerUrl.startsWith("mailto:");
+                const isSocial =
+                  lowerUrl.includes("facebook.com") ||
+                  lowerUrl.includes("twitter.com") ||
+                  lowerUrl.includes("linkedin.com");
+                const isLogin =
+                  lowerText.includes("login") || lowerText.includes("sign in");
+                const isAnchor = href.startsWith("#");
+
+                if (!isPdf && !isEmail && !isSocial && !isLogin && !isAnchor) {
+                  shouldInclude = true;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // Invalid URL, skip
+        }
+      }
+    } else {
+      // Normal keyword-based filtering for other sources
+      const containsFundingKeyword = fundingKeywords.some((keyword) =>
+        lowerText.includes(keyword),
+      );
+      shouldInclude = containsFundingKeyword;
+    }
+
+    if (shouldInclude) {
       const fullUrl = toAbsoluteURL(href, baseUrl);
 
       if (shouldSkipLink(fullUrl, baseUrl, text)) {
@@ -543,22 +590,35 @@ async function main() {
   try {
     const sourcesJson = await fs.readFile(FUNDING_SOURCES_PATH, "utf-8");
     sources = JSON.parse(sourcesJson);
-    console.log(`📚 Loaded ${sources.length} funding sources`);
+    console.log(`📚 Loaded ${sources.length} total funding sources`);
   } catch (error) {
     console.error("❌ Failed to load funding sources:", error.message);
     process.exit(1);
   }
 
-  // Filter to high priority sources only for weekly runs
-  const highPrioritySources = sources.filter((s) => s.priority === "high");
+  // Filter by priority from environment variable
+  const selectedPriority = process.env.DISCOVERY_PRIORITY || "high";
+  const sourcesToProcess =
+    selectedPriority === "all"
+      ? sources
+      : sources.filter((s) => s.priority === selectedPriority);
+
+  console.log(`🎯 Priority filter: "${selectedPriority}"`);
   console.log(
-    `🎯 Processing ${highPrioritySources.length} high-priority sources\n`,
+    `📋 Processing ${sourcesToProcess.length} sources (${sources.length} total available)\n`,
   );
+
+  if (sourcesToProcess.length === 0) {
+    console.log(
+      `⚠️  No sources found with priority "${selectedPriority}". Exiting.`,
+    );
+    return;
+  }
 
   // Discover programs from each source
   const allPrograms = [];
 
-  for (const source of highPrioritySources) {
+  for (const source of sourcesToProcess) {
     const programs = await discoverFromSource(source);
     allPrograms.push(...programs);
 
